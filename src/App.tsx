@@ -1,128 +1,292 @@
+import { useCallback, useRef, useState } from "react";
 import "./styles.css";
+import {
+  type Exam,
+  type Horse,
+  type ShoeChange,
+} from "./types";
+import { actions } from "./lib/store";
+import { useAppState } from "./lib/selectors";
+import {
+  downloadBackup,
+  parseBackupText,
+  type ParsedBackup,
+} from "./lib/backup";
+import { Dashboard } from "./components/Dashboard";
+import { HorseDetail } from "./components/HorseDetail";
+import { HorseFormModal } from "./components/HorseFormModal";
+import { ExamFormModal } from "./components/ExamFormModal";
+import { ShoeFormModal } from "./components/ShoeFormModal";
+import { ImportModal } from "./components/ImportModal";
+import { Modal } from "./components/Modal";
+import { ToastStack, type ToastData, type ToastKind } from "./components/Toast";
+import { latestExam } from "./lib/selectors";
 
-const project = {
-  "sourceNo": 6,
-  "id": "hxyfront-62011",
-  "port": 62011,
-  "title": "马术蹄铁修整档案",
-  "domain": "马术蹄铁",
-  "prompt": "做一个面向马术俱乐部蹄铁师的修蹄记录前端项目，可以记录马匹编号、步态问题、蹄形评估、蹄铁类型、钉位、修蹄日期、下次复查日期和照片备注。页面需要有马匹列表、复查提醒、左右前后蹄对比记录、异常步态标记和蹄铁更换历史。",
-  "palette": [
-    "#78350f",
-    "#166534",
-    "#2563eb"
-  ],
-  "metrics": [
-    "待复查",
-    "异常步态",
-    "更换蹄铁",
-    "马匹档案"
-  ],
-  "filters": [
-    "前蹄",
-    "后蹄",
-    "运动马",
-    "休养马"
-  ],
-  "fields": [
-    "马匹编号",
-    "步态问题",
-    "蹄形评估",
-    "蹄铁类型",
-    "钉位",
-    "下次复查"
-  ],
-  "records": [
-    [
-      "HORSE-18",
-      "右前蹄外侧磨耗",
-      "铝蹄铁",
-      "14天后复查"
-    ],
-    [
-      "HORSE-27",
-      "后蹄裂纹",
-      "加护蹄垫",
-      "拍照归档"
-    ],
-    [
-      "HORSE-31",
-      "步态轻微不稳",
-      "需教练复核",
-      "已标记"
-    ]
-  ]
-};
+type View = { name: "dashboard" } | { name: "horse"; id: string };
 
-function App() {
+export default function App() {
+  const state = useAppState();
+  const [view, setView] = useState<View>({ name: "dashboard" });
+  const [toasts, setToasts] = useState<ToastData[]>([]);
+  const toastId = useRef(0);
+
+  const [horseFormFor, setHorseFormFor] = useState<
+    { mode: "create" } | { mode: "edit"; horse: Horse } | undefined
+  >(undefined);
+  const [examHorse, setExamHorse] = useState<Horse | undefined>(undefined);
+  const [shoeHorse, setShoeHorse] = useState<Horse | undefined>(undefined);
+  const [importData, setImportData] = useState<ParsedBackup | undefined>(
+    undefined
+  );
+  const [picker, setPicker] = useState<"exam" | "shoe" | undefined>(undefined);
+  const [highlightExamId, setHighlightExamId] = useState<string | undefined>(
+    undefined
+  );
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const notify = useCallback((kind: ToastKind, message: string) => {
+    toastId.current += 1;
+    const id = toastId.current;
+    setToasts((t) => [...t, { id, kind, message }]);
+  }, []);
+  const dismiss = useCallback((id: number) => {
+    setToasts((t) => t.filter((x) => x.id !== id));
+  }, []);
+
+  const currentHorse =
+    view.name === "horse"
+      ? state.horses.find((h) => h.id === view.id)
+      : undefined;
+
+  const openHorse = (id: string) => {
+    setView({ name: "horse", id });
+    setHighlightExamId(undefined);
+  };
+
+  const startExam = (horse: Horse) => {
+    setExamHorse(horse);
+    setHighlightExamId(undefined);
+  };
+
+  const handleExport = () => {
+    if (state.horses.length === 0) {
+      notify("info", "当前没有档案可导出");
+      return;
+    }
+    downloadBackup(state);
+    notify(
+      "success",
+      `已导出 ${state.horses.length} 匹马的完整备份（JSON 文件）`
+    );
+  };
+
+  const handleImportFile = async (file: File) => {
+    try {
+      const text = await file.text();
+      const parsed = parseBackupText(text);
+      if (
+        parsed.horses.length === 0 &&
+        parsed.exams.length === 0 &&
+        parsed.shoeChanges.length === 0
+      ) {
+        notify("error", "备份文件中没有任何档案数据");
+        return;
+      }
+      setImportData(parsed);
+    } catch (e) {
+      notify("error", e instanceof Error ? e.message : "备份读取失败");
+    }
+  };
+
   return (
-    <main className="app">
-      <section className="hero">
-        <p>{project.id} · 源提示词{project.sourceNo} · Port {project.port}</p>
-        <h1>{project.title}</h1>
-        <span>{project.prompt}</span>
-      </section>
-
-      <section className="metrics">
-        {project.metrics.map((metric: string, index: number) => (
-          <article key={metric}>
-            <small>{metric}</small>
-            <strong>{[28, 6, 14, 91][index] ?? 10}</strong>
-          </article>
-        ))}
-      </section>
-
-      <section className="workspace">
-        <aside className="panel">
-          <h2>{project.domain}分类</h2>
-          <div className="chips">
-            {project.filters.map((item: string) => (
-              <button key={item}>{item}</button>
-            ))}
-          </div>
-        </aside>
-
-        <section className="panel form-panel">
-          <div className="heading">
-            <div>
-              <p>专业字段</p>
-              <h2>新增记录</h2>
-            </div>
-            <button className="primary">保存记录</button>
-          </div>
-          <div className="field-grid">
-            {project.fields.map((field: string) => (
-              <label key={field}>
-                <span>{field}</span>
-                <input placeholder={"填写" + field} />
-              </label>
-            ))}
-          </div>
-        </section>
-      </section>
-
-      <section className="panel">
-        <div className="heading">
-          <div>
-            <p>近期记录</p>
-            <h2>工作台摘要</h2>
-          </div>
-          <button>导出CSV</button>
+    <div className="app-shell">
+      <header className="topbar">
+        <button className="brand" onClick={() => setView({ name: "dashboard" })}>
+          <span className="brand-mark">蹄</span>
+          <span>
+            <b>马术蹄铁修整档案</b>
+            <small>数据仅保存在当前浏览器</small>
+          </span>
+        </button>
+        <div className="top-actions">
+          <button onClick={handleExport}>导出备份</button>
+          <button onClick={() => fileRef.current?.click()}>导入旧备份</button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="application/json,.json"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void handleImportFile(f);
+              e.target.value = "";
+            }}
+          />
         </div>
-        <div className="records">
-          {project.records.map((record: string[], index: number) => (
-            <article key={record.join("-")}>
-              <b>{String(index + 1).padStart(2, "0")}</b>
-              <div>
-                <h3>{record[0]}</h3>
-                <p>{record.slice(1).join(" · ")}</p>
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
-    </main>
+      </header>
+
+      <main className="app">
+        {view.name === "dashboard" && (
+          <Dashboard
+            state={state}
+            onOpenHorse={openHorse}
+            onNewHorse={() => setHorseFormFor({ mode: "create" })}
+            onNewCheck={() => setPicker("exam")}
+          />
+        )}
+        {view.name === "horse" && currentHorse && (
+          <HorseDetail
+            state={state}
+            horse={currentHorse}
+            onBack={() => setView({ name: "dashboard" })}
+            onNewExam={() => startExam(currentHorse)}
+            onNewShoe={() => setShoeHorse(currentHorse)}
+            onEditHorse={() =>
+              setHorseFormFor({ mode: "edit", horse: currentHorse })
+            }
+            onDeleteHorse={() => {
+              actions.deleteHorse(currentHorse.id);
+              notify("info", `已删除档案 ${currentHorse.code} 及其全部历史`);
+              setView({ name: "dashboard" });
+            }}
+            onDeleteExam={(id) => actions.deleteExam(id)}
+            onDeleteShoe={(id) => actions.deleteShoe(id)}
+            notify={notify}
+            highlightExamId={highlightExamId}
+          />
+        )}
+        {view.name === "horse" && !currentHorse && (
+          <div className="panel missing">
+            <p>该马匹档案不存在或已被删除。</p>
+            <button className="primary" onClick={() => setView({ name: "dashboard" })}>
+              返回列表
+            </button>
+          </div>
+        )}
+      </main>
+
+      <footer className="footnote">
+        所有档案、四蹄检查、换蹄历史与复查提醒均存于本机浏览器（localStorage
+        事件日志），提交即落盘；清理浏览器数据前请先导出备份。
+      </footer>
+
+      {/* 弹窗区 */}
+      {horseFormFor?.mode === "create" && (
+        <HorseFormModal
+          existingCodes={state.horses.map((h) => h.code)}
+          onClose={() => setHorseFormFor(undefined)}
+          onSaved={(h) => {
+            setHorseFormFor(undefined);
+            notify("success", `已建立档案 ${h.code}`);
+            openHorse(h.id);
+          }}
+        />
+      )}
+      {horseFormFor?.mode === "edit" && (
+        <HorseFormModal
+          horse={horseFormFor.horse}
+          existingCodes={state.horses
+            .filter((h) => h.id !== horseFormFor.horse.id)
+            .map((h) => h.code)}
+          onClose={() => setHorseFormFor(undefined)}
+          onSaved={(h) => {
+            setHorseFormFor(undefined);
+            notify("success", `档案 ${h.code} 已更新`);
+          }}
+        />
+      )}
+
+      {examHorse && (
+        <ExamFormModal
+          horse={examHorse}
+          latest={latestExam(state, examHorse.id)}
+          onClose={() => setExamHorse(undefined)}
+          notify={notify}
+          onSaved={(exam: Exam) => {
+            setExamHorse(undefined);
+            openHorse(exam.horseId);
+            setHighlightExamId(exam.id);
+          }}
+        />
+      )}
+
+      {shoeHorse && (
+        <ShoeFormModal
+          horse={shoeHorse}
+          onClose={() => setShoeHorse(undefined)}
+          notify={notify}
+          onSaved={(change: ShoeChange) => {
+            setShoeHorse(undefined);
+            openHorse(change.horseId);
+          }}
+        />
+      )}
+
+      {importData && (
+        <ImportModal
+          current={state}
+          parsed={importData}
+          onClose={() => setImportData(undefined)}
+          onDone={() => setImportData(undefined)}
+          notify={notify}
+        />
+      )}
+
+      {picker && (
+        <HorsePicker
+          title={picker === "exam" ? "选择要检查的马匹" : "选择换蹄的马匹"}
+          state={state}
+          onClose={() => setPicker(undefined)}
+          onPick={(h) => {
+            setPicker(undefined);
+            if (picker === "exam") {
+              openHorse(h.id);
+              startExam(h);
+            } else {
+              openHorse(h.id);
+              setShoeHorse(h);
+            }
+          }}
+        />
+      )}
+
+      <ToastStack toasts={toasts} onDismiss={dismiss} />
+    </div>
   );
 }
 
-export default App;
+function HorsePicker({
+  title,
+  state,
+  onPick,
+  onClose,
+}: {
+  title: string;
+  state: ReturnType<typeof useAppState>;
+  onPick: (h: Horse) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal title={title} subtitle="先选马，再填写对应的检查或换蹄记录" onClose={onClose}>
+      {state.horses.length === 0 ? (
+        <p className="empty-tip">还没有马匹档案，请先建立档案。</p>
+      ) : (
+        <div className="picker-list">
+          {state.horses.map((h) => {
+            const exam = latestExam(state, h.id);
+            return (
+              <button key={h.id} className="picker-row" onClick={() => onPick(h)}>
+                <b>{h.code}</b>
+                <span>{h.name || "—"}</span>
+                <span className="muted">{h.role}</span>
+                <span className="muted">
+                  {exam ? `最近检查 ${exam.date}` : "尚未检查"}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </Modal>
+  );
+}
